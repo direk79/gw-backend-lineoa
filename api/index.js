@@ -1,8 +1,12 @@
+require('dotenv').config();
 const express = require('express');
 const line = require('@line/bot-sdk');
 const axios = require('axios');
 
 const app = express();
+
+// อ่าน Body แบบ JSON สำหรับรองรับ Request จาก Postman
+app.use(express.json());
 
 const config = {
   channelAccessToken: process.env.LINE_CHANNEL_ACCESS_TOKEN,
@@ -11,9 +15,17 @@ const config = {
 
 const BASE_URL = process.env.BASE_URL;
 
-const client = new line.Client(config);
+// สร้าง Client สำหรับ SDK เวอร์ชันใหม่
+const client = new line.messagingApi.MessagingApiClient({
+  channelAccessToken: process.env.LINE_CHANNEL_ACCESS_TOKEN
+});
 
-app.post('/api', line.middleware(config), async (req, res) => {
+// ข้ามการตรวจ Signature เมื่อรันบนเครื่อง Local (ช่วยให้ยิง Postman ได้ ไม่ติด Error 500)
+const middlewareHandler = process.env.NODE_ENV === 'production' 
+  ? line.middleware(config) 
+  : (req, res, next) => next();
+
+app.post('/api', middlewareHandler, async (req, res) => {
   try {
     const events = req.body.events;
 
@@ -44,9 +56,13 @@ app.post('/api', line.middleware(config), async (req, res) => {
             if (resultProcess?.result === true) {
               const successMsg = `${text} เชื่อมต่อกับ ${resultProcess.message} เรียบร้อยแล้ว`;
               
-              await client.replyMessage(replyToken, {
-                type: 'text',
-                text: successMsg
+              // ตอบกลับข้อความผ่าน LINE SDK
+              await client.replyMessage({
+                replyToken: replyToken,
+                messages: [{
+                  type: 'text',
+                  text: successMsg
+                }]
               });
             }
           } catch (apiErr) {
@@ -61,6 +77,12 @@ app.post('/api', line.middleware(config), async (req, res) => {
     console.error('Webhook Error:', error.message);
     return res.status(500).json({ code: 500, result: "error", message: error.message });
   }
+});
+
+// เปิด Server สำหรับรัน Local
+const PORT = process.env.PORT || 3000;
+app.listen(PORT, () => {
+  console.log(`Server running on port ${PORT}`);
 });
 
 module.exports = app;
