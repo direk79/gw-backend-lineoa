@@ -12,18 +12,16 @@ const config = {
 
 const BASE_URL = process.env.BASE_URL;
 
-// ย้าย Middleware ตรวจสอบ Signature ไว้ใช้เฉพาะ Route
-const middlewareHandler = process.env.NODE_ENV === 'production' 
+// เช็คว่ามี Channel Secret หรือไม่ ถ้ามีให้ใช้ line.middleware เสมอ
+const middlewareHandler = process.env.LINE_CHANNEL_SECRET 
   ? line.middleware(config) 
   : (req, res, next) => next();
 
-// 1. วาง line.middleware ก่อน express.json()
-// 2. express.json() จะทำงานเมื่อเป็นด่านถัดไปเท่านั้น เพื่อไม่ให้ไปกวน Raw Body ของ LINE
 app.post('/api', middlewareHandler, express.json(), async (req, res) => {
   try {
     const events = req.body.events;
 
-    // รองรับกรณี LINE กด Verify (จะส่ง events: [] มา)
+    // หาก LINE กด Verify ปุ่มส้ม events จะเป็น array ว่าง ให้ตอบ 200 ทันที
     if (!Array.isArray(events)) {
       return res.status(400).json({ code: 400, result: "fail", message: "events must be an array" });
     }
@@ -37,10 +35,8 @@ app.post('/api', middlewareHandler, express.json(), async (req, res) => {
       if (type === 'message' && message?.type === 'text') {
         const text = message.text ? message.text.trim() : '';
 
-        // เช็คว่าขึ้นต้นด้วย gw หรือ GW
         if (text.toLowerCase().startsWith('gw')) {
           try {
-            // ยิง External API เท่านั้น (ไม่ส่ง replyMessage กลับ LINE)
             await axios.post(`${BASE_URL}/gwcenter/api/v1/servicelineoa/matchuserline/`, {
               userId: userId,
               message: text
@@ -52,7 +48,6 @@ app.post('/api', middlewareHandler, express.json(), async (req, res) => {
       }
     }
 
-    // ส่ง 200 OK กลับไปให้ LINE Platform เสมอ
     return res.status(200).json({ code: 200, result: "success", message: "", data: 0 });
   } catch (error) {
     console.error('Webhook Error:', error.message);
