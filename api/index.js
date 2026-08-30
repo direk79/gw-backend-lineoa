@@ -5,9 +5,6 @@ const axios = require('axios');
 
 const app = express();
 
-// อ่าน Body แบบ JSON สำหรับรองรับ Request จาก Postman
-app.use(express.json());
-
 const config = {
   channelAccessToken: process.env.LINE_CHANNEL_ACCESS_TOKEN,
   channelSecret: process.env.LINE_CHANNEL_SECRET,
@@ -15,26 +12,24 @@ const config = {
 
 const BASE_URL = process.env.BASE_URL;
 
-// สร้าง Client สำหรับ SDK เวอร์ชันใหม่
-const client = new line.messagingApi.MessagingApiClient({
-  channelAccessToken: process.env.LINE_CHANNEL_ACCESS_TOKEN
-});
-
-// ข้ามการตรวจ Signature เมื่อรันบนเครื่อง Local (ช่วยให้ยิง Postman ได้ ไม่ติด Error 500)
+// ย้าย Middleware ตรวจสอบ Signature ไว้ใช้เฉพาะ Route
 const middlewareHandler = process.env.NODE_ENV === 'production' 
   ? line.middleware(config) 
   : (req, res, next) => next();
 
-app.post('/api', middlewareHandler, async (req, res) => {
+// 1. วาง line.middleware ก่อน express.json()
+// 2. express.json() จะทำงานเมื่อเป็นด่านถัดไปเท่านั้น เพื่อไม่ให้ไปกวน Raw Body ของ LINE
+app.post('/api', middlewareHandler, express.json(), async (req, res) => {
   try {
     const events = req.body.events;
 
+    // รองรับกรณี LINE กด Verify (จะส่ง events: [] มา)
     if (!Array.isArray(events)) {
       return res.status(400).json({ code: 400, result: "fail", message: "events must be an array" });
     }
 
     for (const event of events) {
-      const { type, replyToken, source, message } = event;
+      const { type, source, message } = event;
       const userId = source?.userId;
 
       if (!userId) continue;
@@ -45,26 +40,11 @@ app.post('/api', middlewareHandler, async (req, res) => {
         // เช็คว่าขึ้นต้นด้วย gw หรือ GW
         if (text.toLowerCase().startsWith('gw')) {
           try {
-            // ยิง API ไปแมตช์ข้อมูล
-            const apiResponse = await axios.post(`${BASE_URL}/gwcenter/api/v1/servicelineoa/matchuserline/`, {
+            // ยิง External API เท่านั้น (ไม่ส่ง replyMessage กลับ LINE)
+            await axios.post(`${BASE_URL}/gwcenter/api/v1/servicelineoa/matchuserline/`, {
               userId: userId,
               message: text
             });
-
-            const resultProcess = apiResponse.data;
-
-            if (resultProcess?.result === true) {
-              const successMsg = `${text} เชื่อมต่อกับ ${resultProcess.message} เรียบร้อยแล้ว`;
-              
-              // ตอบกลับข้อความผ่าน LINE SDK
-              await client.replyMessage({
-                replyToken: replyToken,
-                messages: [{
-                  type: 'text',
-                  text: successMsg
-                }]
-              });
-            }
           } catch (apiErr) {
             console.error('Call External API Error:', apiErr.response?.data || apiErr.message);
           }
@@ -72,6 +52,7 @@ app.post('/api', middlewareHandler, async (req, res) => {
       }
     }
 
+    // ส่ง 200 OK กลับไปให้ LINE Platform เสมอ
     return res.status(200).json({ code: 200, result: "success", message: "", data: 0 });
   } catch (error) {
     console.error('Webhook Error:', error.message);
@@ -79,8 +60,7 @@ app.post('/api', middlewareHandler, async (req, res) => {
   }
 });
 
-// เปิด Server สำหรับรัน Local
-const PORT = process.env.PORT || 3000;
+const PORT = process.env.PORT || 3002;
 app.listen(PORT, () => {
   console.log(`Server running on port ${PORT}`);
 });
